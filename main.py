@@ -3,7 +3,7 @@ import sys
 import json
 import copy
 import pandas as pd
-from PyQt5.QtWidgets import QApplication, QMainWindow, QMessageBox, QFileDialog # <<< CORREÇÃO AQUI
+from PyQt5.QtWidgets import QApplication, QMainWindow, QMessageBox, QFileDialog
 from PyQt5.QtCore import QThread
 
 # Importa os componentes dos outros arquivos
@@ -28,6 +28,7 @@ class UserEditorApp(QMainWindow):
         # Conecta os eventos dos widgets criados em setup_ui
         self.load_xlsx_button.clicked.connect(self.carregar_em_massa_xlsx)
         self.save_button.clicked.connect(self.salvar_arquivo_json)
+        self.save_csv_button.clicked.connect(self.salvar_arquivo_csv)
         self.user_list_widget.currentItemChanged.connect(self.on_user_selection_changed)
         self.clear_form_button.clicked.connect(self.clear_form_for_new_user)
         self.add_new_user_button.clicked.connect(self.add_new_user)
@@ -35,6 +36,12 @@ class UserEditorApp(QMainWindow):
         
         # Inicia a busca do template via API
         self.start_api_call()
+
+    def set_ui_enabled(self, enabled):
+        self.load_xlsx_button.setEnabled(enabled)
+        self.save_button.setEnabled(enabled)
+        self.save_csv_button.setEnabled(enabled)
+        self.right_panel_group.setEnabled(enabled)
 
     def start_api_call(self):
         self.statusBar().showMessage("Carregando template da API...")
@@ -54,8 +61,7 @@ class UserEditorApp(QMainWindow):
         self.dados_usuarios = []
         self.atualizar_lista_gui()
         self.criar_formulario_dinamico()
-        self.load_xlsx_button.setEnabled(True)
-        self.right_panel_group.setEnabled(True)
+        self.set_ui_enabled(True)
         self.statusBar().showMessage("Template carregado da API com sucesso! Pronto para uso.", 5000)
 
     def on_template_load_error(self, error_msg):
@@ -155,7 +161,6 @@ class UserEditorApp(QMainWindow):
         caminho, _ = QFileDialog.getOpenFileName(self, "Abrir Planilha", "", "Excel Files (*.xlsx)")
         if not caminho: return
         try:
-            # Usa a função importada
             novos, nao_encontrados = processar_dataframe(pd.read_excel(caminho, header=2), self.template_usuario)
             self.dados_usuarios.extend(novos)
             self.atualizar_lista_gui()
@@ -174,13 +179,76 @@ class UserEditorApp(QMainWindow):
         except Exception as e:
             QMessageBox.critical(self, "Erro ao Salvar", f"Não foi possível salvar o arquivo: {e}")
 
+    def salvar_arquivo_csv(self):
+        if not self.dados_usuarios:
+            QMessageBox.warning(self, "Aviso", "Não há dados para salvar.")
+            return
+
+        caminho, _ = QFileDialog.getSaveFileName(self, "Salvar Arquivo CSV", "dados_finais.csv", "CSV Files (*.csv)")
+        if not caminho:
+            return
+
+        try:
+            json_key_map = {
+                'Email': 'email', 'New email': 'new_email', 'Agent ID': 'agent_number', 'First name': 'first_name',
+                'Last name': 'last_name', 'Alias': 'alias', 'Status': 'status', 'Location': 'location',
+                'Chat concurrency': 'max_chat_limit', 'Chat concurrency status': 'max_chat_limit_enabled',
+                'Non-restricted international calling': 'unrestricted_international_calling',
+                'External User': 'external_user', 'External SIP URI': 'ucaas_sip_uri',
+                'UCaaS username': 'ucaas_user_name', 'Agent Extensions': 'extension_number',
+                'Availability Filter Name': 'availability_filter',
+                'Direct Inbound Number: 1': 'direct_inbound_number1',
+                'Direct Inbound Number: 2': 'direct_inbound_number2',
+                'Direct Inbound Number: 3': 'direct_inbound_number3',
+                'Direct Inbound Number: 4': 'direct_inbound_number4',
+                'Direct Inbound Number: 5': 'direct_inbound_number5'
+            }
+
+            final_headers = list(json_key_map.keys())
+            
+            role_headers = [f"Role: {role['name']}" for role in self.template_usuario.get('roles', [])]
+            team_headers = [f"Team: {team['name']}" for team in self.template_usuario.get('teams', [])]
+            
+            final_headers.extend(role_headers)
+            final_headers.extend(team_headers)
+            
+            dados_planos = []
+            for user_data in self.dados_usuarios:
+                linha = {}
+                for header, json_key in json_key_map.items():
+                    linha[header] = user_data.get(json_key, "")
+
+                active_roles = {role['name'] for role in user_data.get('roles', []) if role.get('value') == 1}
+                for role_header in role_headers:
+                    role_name = role_header.replace("Role: ", "")
+                    linha[role_header] = 1 if role_name in active_roles else 0
+
+                active_teams = {team['name'] for team in user_data.get('teams', []) if team.get('value') == 1}
+                for team_header in team_headers:
+                    team_name = team_header.replace("Team: ", "")
+                    linha[team_header] = 1 if team_name in active_teams else 0
+                
+                dados_planos.append(linha)
+            
+            df = pd.DataFrame(dados_planos)
+            df = df.reindex(columns=final_headers)
+
+            df.to_csv(caminho, index=False, sep=',', encoding='utf-8-sig')
+            self.statusBar().showMessage(f"Arquivo CSV salvo com sucesso em '{caminho}'!", 5000)
+        except Exception as e:
+            QMessageBox.critical(self, "Erro ao Salvar CSV", f"Não foi possível salvar o arquivo:\n{e}")
+
     def atualizar_lista_gui(self):
         self.user_list_widget.currentItemChanged.disconnect()
         self.user_list_widget.clear()
         for usuario in self.dados_usuarios:
             self.user_list_widget.addItem(f"{usuario.get('first_name')} {usuario.get('last_name')} ({usuario.get('email')})")
         self.user_list_widget.currentItemChanged.connect(self.on_user_selection_changed)
-        self.save_button.setEnabled(len(self.dados_usuarios) > 0)
+        
+        deve_habilitar = len(self.dados_usuarios) > 0
+        self.save_button.setEnabled(deve_habilitar)
+        self.save_csv_button.setEnabled(deve_habilitar)
+
 
 if __name__ == '__main__':
     app = QApplication(sys.argv)
