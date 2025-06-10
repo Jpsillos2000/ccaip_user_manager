@@ -1,0 +1,6 @@
+# requirements.txt
+PyQt5
+requests
+python-dotenv
+pandas
+openpyxl
