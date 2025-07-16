@@ -3,9 +3,9 @@ import sys
 import json
 import copy
 import pandas as pd
-from PyQt5.QtWidgets import (QApplication, QMainWindow, QMessageBox, QFileDialog,
-                             QLineEdit, QLabel, QGroupBox, QVBoxLayout, QFormLayout,
-                             QCheckBox, QComboBox)
+from PyQt5.QtWidgets import (QApplication, QMainWindow, QMessageBox, QFileDialog, 
+                             QLineEdit, QLabel, QGroupBox, QVBoxLayout, QFormLayout, 
+                             QCheckBox, QComboBox, QInputDialog)
 from PyQt5.QtCore import QThread, Qt, QTimer, pyqtSignal
 
 from .api_worker import ApiWorker
@@ -18,7 +18,6 @@ class UserEditorApp(QMainWindow):
     def __init__(self):
         super().__init__()
         
-        # Estado da Aplicação
         self.dados_usuarios = []
         self.template_usuario = None
         self.team_id_map = {}
@@ -39,9 +38,9 @@ class UserEditorApp(QMainWindow):
         QTimer.singleShot(50, self.carregar_dados_iniciais)
 
     def setup_connections_and_thread(self):
-        # Conexões dos botões da UI
         self.load_xlsx_button.clicked.connect(self.carregar_em_massa_xlsx)
         self.compare_button.clicked.connect(self.comparar_com_xlsx)
+        self.set_all_teams_button.clicked.connect(self.definir_time_para_todos)
         self.save_button.clicked.connect(self.salvar_arquivo_json)
         self.save_csv_button.clicked.connect(self.salvar_arquivo_csv)
         self.user_list_widget.currentItemChanged.connect(self.on_user_selection_changed)
@@ -49,16 +48,12 @@ class UserEditorApp(QMainWindow):
         self.add_new_user_button.clicked.connect(self.add_new_user)
         self.save_changes_button.clicked.connect(self.save_changes)
 
-        # Configuração da thread persistente
         self.api_thread = QThread()
         self.api_worker = ApiWorker()
         self.api_worker.moveToThread(self.api_thread)
-
         self.api_worker.success.connect(self.on_api_success)
         self.api_worker.error.connect(self.on_api_load_error)
-        
         self.trigger_api_call.connect(self.api_worker.start_job)
-        
         self.api_thread.finished.connect(self.api_worker.deleteLater)
         self.api_thread.start()
 
@@ -67,6 +62,7 @@ class UserEditorApp(QMainWindow):
         self.right_panel_group.setEnabled(enabled)
         has_data = enabled and len(self.dados_usuarios) > 0
         self.compare_button.setEnabled(has_data)
+        self.set_all_teams_button.setEnabled(has_data)
         self.save_button.setEnabled(has_data)
         self.save_csv_button.setEnabled(has_data)
         if loading_message:
@@ -101,14 +97,11 @@ class UserEditorApp(QMainWindow):
                 for assignee in team.get('assignees', []):
                     first_name = assignee.get('first_name', '')
                     last_name = assignee.get('last_name', '')
-                    
                     if not first_name: continue
                     lookup_key = f"{first_name} {last_name}".strip()
-
                     if lookup_key not in self.platform_users_map:
                         self.platform_users_map[lookup_key] = []
                     self.platform_users_map[lookup_key].append(team_info)
-                    
                     ramal = assignee.get('extension_number')
                     if ramal:
                         self.ramais_existentes.add(str(ramal))
@@ -161,6 +154,30 @@ class UserEditorApp(QMainWindow):
             QMessageBox.critical(self, "Erro ao Processar Planilha", f"Ocorreu um erro: {e}")
         finally:
             self.set_ui_enabled(True)
+
+    def definir_time_para_todos(self):
+        if not self.dados_usuarios:
+            QMessageBox.warning(self, "Ação Inválida", "Não há usuários carregados na lista.")
+            return
+
+        nomes_dos_times = list(self.team_id_map.keys())
+        if not nomes_dos_times:
+            QMessageBox.warning(self, "Sem Times", "Não foi possível encontrar a lista de times da plataforma.")
+            return
+
+        time_selecionado, ok = QInputDialog.getItem(self, "Definir Time para Todos", 
+                                                    "Selecione o time que será aplicado a todos os usuários:", 
+                                                    nomes_dos_times, 0, False)
+        
+        if ok and time_selecionado:
+            for usuario in self.dados_usuarios:
+                for team_data in usuario.get('teams', []) or []:
+                    team_data['value'] = 1 if team_data['name'] == time_selecionado else 0
+            
+            if self.current_user_index is not None:
+                self.populate_form_with_user_data(self.dados_usuarios[self.current_user_index])
+
+            self.statusBar().showMessage(f"O time '{time_selecionado}' foi definido para todos os {len(self.dados_usuarios)} usuários.", 5000)
 
     def closeEvent(self, event):
         if self.api_thread and self.api_thread.isRunning():
