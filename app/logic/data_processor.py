@@ -1,4 +1,4 @@
-# data_processor.py
+# app/logic/data_processor.py
 import pandas as pd
 import copy
 import random
@@ -26,28 +26,44 @@ def processar_dataframe(df, template_usuario, platform_users_map, gerar_ramais=F
     if team_id_map is None: team_id_map = {}
 
     novos_usuarios, times_nao_encontrados, times_sem_id = [], set(), set()
-    colunas_obrigatorias = ['Email', 'Nome', 'Sobrenome', 'Cargo', 'Time']
-    if not all(col in df.columns for col in colunas_obrigatorias):
-        raise ValueError(f"A planilha deve conter as colunas obrigatórias: {', '.join(colunas_obrigatorias)}")
+
+    # <<< INÍCIO DA NOVA LÓGICA DE COLUNAS FLEXÍVEIS >>>
+    # Mapeia os nomes das colunas originais para uma versão padronizada (minúscula)
+    column_map = {col.lower().strip(): col for col in df.columns}
+    
+    # Define as colunas necessárias em minúsculo
+    colunas_necessarias = ['email', 'nome', 'sobrenome', 'cargo', 'time', 'matricula']
+    
+    # Verifica se todas as colunas necessárias existem no mapa
+    for col_necessaria in colunas_necessarias:
+        if col_necessaria not in column_map:
+            raise ValueError(f"A planilha deve conter a coluna obrigatória: '{col_necessaria}' (a capitalização não importa).")
 
     for _, row in df.iterrows():
-        if pd.isna(row.get('Email')): continue
+        # Função auxiliar para pegar o valor da linha, ignorando a capitalização
+        def get_value(col_name):
+            original_col_name = column_map.get(col_name.lower())
+            if original_col_name and original_col_name in row:
+                return row[original_col_name]
+            return None
+
+        if pd.isna(get_value('Email')): continue
         
         novo_usuario = copy.deepcopy(template_usuario)
-        email_excel = str(row.get('Email')).strip()
-        time_excel = str(row.get('Time')).strip()
+        email_excel = str(get_value('Email')).strip()
+        time_excel = str(get_value('Time')).strip()
         
         first_name, last_name = "", ""
-        sobrenome_excel = row.get('Sobrenome')
+        sobrenome_excel = get_value('Sobrenome')
         if pd.isna(sobrenome_excel) or str(sobrenome_excel).strip() == '':
-            nome_completo = str(row.get('Nome', '')).strip()
+            nome_completo = str(get_value('Nome') or '').strip()
             partes_nome = nome_completo.split()
             if len(partes_nome) > 1:
                 first_name, last_name = partes_nome[0], " ".join(partes_nome[1:])
             else:
                 first_name, last_name = nome_completo, ""
         else:
-            first_name, last_name = str(row.get('Nome', '')), str(sobrenome_excel)
+            first_name, last_name = str(get_value('Nome') or ''), str(sobrenome_excel)
         
         lookup_key = f"{first_name} {last_name}".strip()
         
@@ -76,13 +92,19 @@ def processar_dataframe(df, template_usuario, platform_users_map, gerar_ramais=F
             elif time_excel:
                 times_sem_id.add(time_excel)
         
+        matricula_excel = get_value('matricula')
+        agent_number = str(matricula_excel) if pd.notna(matricula_excel) else None
+
         novo_usuario.update({
-            'email': email_excel, 'first_name': first_name, 'last_name': last_name,
-            'agent_number': None, 'extension_number': ramal_gerado,
+            'email': email_excel, 
+            'first_name': first_name, 
+            'last_name': last_name,
+            'agent_number': agent_number,
+            'extension_number': ramal_gerado,
             'location': "", 'alias': "", 'new_email': ""
         })
 
-        cargo = str(row.get('Cargo')).strip()
+        cargo = str(get_value('Cargo')).strip()
         for role in novo_usuario.get('roles') or []:
             role['value'] = 1 if (cargo == 'Supervisor' and role['name'] == 'Manager Atendente') or (cargo == 'Atendente' and role['name'] == 'Agent') else 0
         
@@ -92,7 +114,7 @@ def processar_dataframe(df, template_usuario, platform_users_map, gerar_ramais=F
         if time_excel and time_excel not in {t['name'] for t in template_usuario.get('teams', []) or []}:
             times_nao_encontrados.add(time_excel)
         
-        limite_chats_valor = row.get('limite de chats')
+        limite_chats_valor = get_value('limite de chats') # Também funciona com case-insensitive
         if pd.notna(limite_chats_valor) and str(limite_chats_valor).strip() != '':
             novo_usuario['max_chat_limit'], novo_usuario['max_chat_limit_enabled'] = str(int(float(limite_chats_valor))), "1"
         else:

@@ -1,4 +1,4 @@
-# api_worker.py
+# app/api_worker.py
 import os
 import requests
 from dotenv import load_dotenv
